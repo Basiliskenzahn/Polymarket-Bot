@@ -16,8 +16,10 @@ from .scanner import scan
 from .simulator import PaperBroker
 from .storage import Store
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                       "data", "pmquant.db")
+_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "data")
+DB_PATH = os.path.join(_DATA_DIR, "pmquant.db")
+TICKS_PATH = os.path.join(_DATA_DIR, "ticks.db")
 
 
 def cmd_scan(args: argparse.Namespace) -> None:
@@ -33,7 +35,8 @@ def cmd_run(args: argparse.Namespace) -> None:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     store = Store(DB_PATH)
     engine = Engine(store, PaperBroker(cash=args.cash), Config(top_markets=args.top),
-                    use_ws=not args.no_ws)
+                    use_ws=not args.no_ws,
+                    ticks_path=None if args.no_ws else TICKS_PATH)
     duration = args.minutes * 60 if args.minutes else None
     try:
         engine.run(interval=args.interval, duration=duration)
@@ -44,6 +47,55 @@ def cmd_run(args: argparse.Namespace) -> None:
 def cmd_analyze(args: argparse.Namespace) -> None:
     store = Store(DB_PATH)
     evaluate(store.conn, [float(h) for h in args.horizons.split(",")])
+
+
+def cmd_ticks(args: argparse.Namespace) -> None:
+    import sqlite3
+    if not os.path.exists(TICKS_PATH):
+        print("no tick data yet — start a run first")
+        return
+    conn = sqlite3.connect(TICKS_PATH)
+    total, t0, t1, assets = conn.execute(
+        "SELECT COUNT(*), MIN(ts), MAX(ts), COUNT(DISTINCT asset) FROM ticks"
+    ).fetchone()
+    if not total:
+        print("tick file exists but is empty")
+        return
+    hours = (t1 - t0) / 3600
+    size_mb = sum(os.path.getsize(TICKS_PATH + ext)
+                  for ext in ("", "-wal") if os.path.exists(TICKS_PATH + ext)) / 1e6
+    print("== tick capture ==")
+    print(f"events:   {total:,} over {hours:.1f}h "
+          f"({total / max(1e-9, t1 - t0):.1f}/s avg) across {assets} tokens")
+    print(f"on disk:  {size_mb:.1f} MB "
+          f"(~{size_mb / max(1e-3, hours) * 24:.0f} MB/day at this rate)")
+    for kind, n in conn.execute(
+            "SELECT kind, COUNT(*) FROM ticks GROUP BY kind ORDER BY 2 DESC"):
+        print(f"  {kind:<10} {n:>10,}")
+
+
+def cmd_flow(args: argparse.Namespace) -> None:
+    from .tickstudy import run_study
+    if not os.path.exists(TICKS_PATH):
+        print("no tick data yet — start a run first")
+        return
+    run_study(TICKS_PATH, DB_PATH)
+
+
+def cmd_maker(args: argparse.Namespace) -> None:
+    from .makersim import run_maker
+    if not os.path.exists(TICKS_PATH):
+        print("no tick data yet — start a run first")
+        return
+    run_maker(TICKS_PATH, DB_PATH)
+
+
+def cmd_chart(args: argparse.Namespace) -> None:
+    from .charts import render_standalone
+    out = os.path.join(_DATA_DIR, "report.html")
+    with open(out, "w") as fh:
+        fh.write(render_standalone(DB_PATH, TICKS_PATH))
+    print(f"dashboard written to {out}")
 
 
 def cmd_report(args: argparse.Namespace) -> None:
@@ -101,6 +153,18 @@ def main() -> None:
 
     p = sub.add_parser("report", help="P&L and activity summary")
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("ticks", help="tick capture statistics")
+    p.set_defaults(func=cmd_ticks)
+
+    p = sub.add_parser("chart", help="render the HTML dashboard to data/report.html")
+    p.set_defaults(func=cmd_chart)
+
+    p = sub.add_parser("flow", help="trade-flow predictiveness study on tick data")
+    p.set_defaults(func=cmd_flow)
+
+    p = sub.add_parser("maker", help="passive market-making backtest on tick data")
+    p.set_defaults(func=cmd_maker)
 
     args = parser.parse_args()
     args.func(args)

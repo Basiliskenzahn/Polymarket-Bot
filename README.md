@@ -34,6 +34,15 @@ Gamma API (metadata)      CLOB API (order books)
   `price_change` deltas; falls back to REST polling per market whenever the
   socket drops or a book goes stale. Each tick stores best bid/ask, depth,
   imbalance, and top-5 levels in SQLite.
+- **Tick capture** — every websocket event is also persisted to
+  `data/ticks.db` for research. Polymarket emits full book snapshots, so the
+  store delta-encodes the stream itself: one flat row per changed price level
+  (diffed against the previous snapshot), trade prints with aggressor side,
+  and a zlib-compressed full-book checkpoint per token every 10 minutes to
+  bound replay length. Token ids (~77-digit strings) are interned to integer
+  keys. Net cost: ~70 bytes/event — a few hundred MB/day even during in-play
+  sports bursts. The book at any time t = latest checkpoint ≤ t + replayed
+  changes, enabling order-flow research at full tick resolution.
 - **Signal engine** —
   - *dutch book*: YES + NO asks summing below $1 → risk-free arbitrage pair;
   - *order-book imbalance*: depth-weighted buy/sell pressure near the touch;
@@ -54,6 +63,9 @@ python3 -m pmquant.cli run --top 15         # collect + paper trade until Ctrl-C
 python3 -m pmquant.cli run --minutes 60     # timed session (--no-ws for REST only)
 python3 -m pmquant.cli report               # markets, snapshots, trades, P&L
 python3 -m pmquant.cli analyze              # does imbalance predict 1–5 min moves?
+python3 -m pmquant.cli ticks                # tick capture stats (rate, size, kinds)
+python3 -m pmquant.cli flow                 # replay ticks: does trade flow predict
+                                            # 1-60s mid moves? (momentum/reversal)
 ```
 
 `analyze` evaluates the imbalance signal on the collected snapshot history:

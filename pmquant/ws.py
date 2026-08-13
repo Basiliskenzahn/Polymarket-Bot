@@ -140,9 +140,10 @@ class WebSocketClient:
 class MarketStream:
     """Live order books for a set of outcome tokens, updated on a reader thread."""
 
-    def __init__(self, asset_ids: List[str], url: str = WS_URL):
+    def __init__(self, asset_ids: List[str], url: str = WS_URL, on_event=None):
         self._assets = list(dict.fromkeys(asset_ids))
         self.url = url
+        self._sink = on_event  # called as on_event(recv_ts, event_dict), ws thread
         self.connected = False
         self._lock = threading.Lock()
         # token -> {"bids": {price: size}, "asks": {...}, "tick": float, "ts": float}
@@ -220,6 +221,13 @@ class MarketStream:
             return  # "PONG" and other non-JSON keepalives
         events = data if isinstance(data, list) else [data]
         now = time.time()
+        if self._sink is not None:  # outside the lock: sink I/O must not block book()
+            for ev in events:
+                if isinstance(ev, dict) and ev.get("asset_id"):
+                    try:
+                        self._sink(now, ev)
+                    except Exception:
+                        pass  # capture must never take down the live feed
         with self._lock:
             for ev in events:
                 if not isinstance(ev, dict):

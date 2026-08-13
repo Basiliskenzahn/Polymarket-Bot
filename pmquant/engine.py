@@ -37,13 +37,15 @@ class Config:
 
 class Engine:
     def __init__(self, store: Store, broker: PaperBroker, cfg: Config = Config(),
-                 use_ws: bool = True):
+                 use_ws: bool = True, ticks_path: Optional[str] = None):
         self.store = store
         self.broker = broker
         self.cfg = cfg
         self.gamma = GammaClient()
         self.clob = ClobClient()
         self.use_ws = use_ws
+        self.ticks_path = ticks_path
+        self.ticks = None           # TickStore, created in run() alongside the stream
         self.stream = None          # set in run() once the universe is known
         self._ws_books = 0          # books served from the websocket...
         self._rest_books = 0        # ...vs REST fallback
@@ -62,24 +64,36 @@ class Engine:
     # -- universe -------------------------------------------------------------
 
     def refresh_universe(self) -> int:
-        markets = scan(self.gamma, self.cfg.top_markets,
-                       self.cfg.min_liquidity, self.cfg.min_volume24h)
+        try:
+            markets = scan(self.gamma, self.cfg.top_markets,
+                           self.cfg.min_liquidity, self.cfg.min_volume24h)
+        except Exception as exc:  # API down: keep trading what we already track
+            print(f"  ! market scan failed ({exc}); keeping current universe",
+                  flush=True)
+            return len(self.store.tracked_markets())
         for m in markets:
             self.store.track_market(m)
         return len(markets)
 
     # -- one tick over all tracked markets -------------------------------------
 
-    def tick(self) -> None:
+    def tick(self) -> int:
+        """Process one round over all markets; returns how many succeeded."""
         mids: Dict[str, float] = {}
+        ok = fails = 0
         for row in self.store.tracked_markets():
             try:
                 books = self._fetch_books(row["token_yes"], row["token_no"])
             except Exception as exc:  # network hiccup: skip market this tick
+                fails += 1
                 print(f"  ! {row['question'][:50]}: {exc}")
+                if fails >= 3 and ok == 0:  # API down: don't grind the rest
+                    print("  ! API unreachable — abandoning this tick")
+                    break
                 continue
             if books is None:
                 continue
+            ok += 1
             book_yes, book_no = books
             self.store.record_snapshot(row["id"], book_yes, self.cfg.depth_within)
             self.store.record_snapshot(row["id"], book_no, self.cfg.depth_within)
@@ -88,10 +102,12 @@ class Engine:
                     mids[b.token_id] = b.mid
             self._trade_arb(row, book_yes, book_no)
             self._trade_imbalance(row, book_yes, book_no)
-        self.store.record_account(self.broker.cash,
-                                  self.broker.position_value(mids))
-        self.store.save_broker(self.broker.cash, self.broker.positions)
+        if ok:  # skip during outages: no mids would mark positions at cost
+            self.store.record_account(self.broker.cash,
+                                      self.broker.position_value(mids))
+            self.store.save_broker(self.broker.cash, self.broker.positions)
         self.store.commit()
+        return ok
 
     def _fetch_books(self, token_yes: str, token_no: str):
         if self.stream is not None:
@@ -215,15 +231,28 @@ class Engine:
         n = self.refresh_universe()
         if self.use_ws:
             from .ws import MarketStream
-            self.stream = MarketStream(self._tracked_tokens())
+            if self.ticks_path:
+                from .ticks import TickStore
+                self.ticks = TickStore(self.ticks_path)
+            self.stream = MarketStream(
+                self._tracked_tokens(),
+                on_event=self.ticks.ingest if self.ticks else None)
             self.stream.start()
         feed = "websocket (REST fallback)" if self.stream else "REST polling"
         print(f"tracking {n} markets via {feed} | paper cash ${self.broker.cash:.2f}",
               flush=True)
         last_scan = time.time()
+        backoff = 0.0
         while duration is None or time.time() - started < duration:
             tick_start = time.time()
-            self.tick()
+            ok = self.tick()
+            if ok == 0:  # full outage: back off instead of hammering retries
+                backoff = min(backoff * 2 or interval * 2, 600.0)
+                print(f"{time.strftime('%H:%M:%S')} polymarket unreachable, "
+                      f"retrying in {backoff:.0f}s", flush=True)
+                time.sleep(backoff)
+                continue
+            backoff = 0.0
             self.settle_resolved()
             if time.time() - last_scan > rescan_every:
                 self.refresh_universe()
@@ -235,6 +264,8 @@ class Engine:
             if self.stream is not None:
                 live = "live" if self.stream.connected else "reconnecting"
                 ws_state = f" | ws {live} ({self._ws_books}ws/{self._rest_books}rest)"
+                if self.ticks is not None:
+                    ws_state += f" | ticks {self.ticks.total:,}"
             print(f"{time.strftime('%H:%M:%S')} tick {elapsed:.1f}s"
                   f" | cash ${self.broker.cash:.2f}"
                   f" | {len(self.broker.positions)} open{ws_state}", flush=True)
