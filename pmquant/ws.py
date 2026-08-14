@@ -39,8 +39,9 @@ class WebSocketClient:
             raw = ssl.create_default_context().wrap_socket(
                 raw, server_hostname=u.hostname)
         key = base64.b64encode(os.urandom(16)).decode()
+        path = (u.path or "/") + (f"?{u.query}" if u.query else "")
         raw.sendall((
-            f"GET {u.path or '/'} HTTP/1.1\r\n"
+            f"GET {path} HTTP/1.1\r\n"
             f"Host: {u.hostname}\r\n"
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
@@ -93,6 +94,10 @@ class WebSocketClient:
 
     def send_text(self, payload: str) -> None:
         self._send_frame(0x1, payload.encode())
+
+    def send_pong(self, payload: bytes = b"") -> None:
+        """Unsolicited pong — some venues (Binance) accept this as keepalive."""
+        self._send_frame(0xA, payload)
 
     def recv_message(self) -> Optional[str]:
         """Next text message; answers pings transparently, None on close.

@@ -20,6 +20,7 @@ _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
                          "data")
 DB_PATH = os.path.join(_DATA_DIR, "pmquant.db")
 TICKS_PATH = os.path.join(_DATA_DIR, "ticks.db")
+_VENUE = "polymarket"
 
 
 def cmd_scan(args: argparse.Namespace) -> None:
@@ -87,7 +88,18 @@ def cmd_maker(args: argparse.Namespace) -> None:
     if not os.path.exists(TICKS_PATH):
         print("no tick data yet — start a run first")
         return
-    run_maker(TICKS_PATH, DB_PATH)
+    run_maker(TICKS_PATH, DB_PATH, venue=_VENUE)
+
+
+def cmd_crypto(args: argparse.Namespace) -> None:
+    from .cryptorun import run_crypto
+    os.makedirs(_DATA_DIR, exist_ok=True)
+    duration = args.minutes * 60 if args.minutes else None
+    try:
+        run_crypto(Store(DB_PATH), TICKS_PATH, top=args.top,
+                   interval=args.interval, duration=duration)
+    except KeyboardInterrupt:
+        print("\nstopped.")
 
 
 def cmd_chart(args: argparse.Namespace) -> None:
@@ -129,6 +141,9 @@ def cmd_report(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="pmquant")
+    parser.add_argument("--venue", choices=("polymarket", "crypto"),
+                        default="polymarket",
+                        help="which venue's data to operate on")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("scan", help="show current tradeable universe")
@@ -160,6 +175,12 @@ def main() -> None:
     p = sub.add_parser("chart", help="render the HTML dashboard to data/report.html")
     p.set_defaults(func=cmd_chart)
 
+    p = sub.add_parser("crypto", help="collect Binance books + trades (no trading)")
+    p.add_argument("--top", type=int, default=5, help="symbols by 24h volume")
+    p.add_argument("--interval", type=float, default=30.0)
+    p.add_argument("--minutes", type=float, default=None)
+    p.set_defaults(func=cmd_crypto)
+
     p = sub.add_parser("flow", help="trade-flow predictiveness study on tick data")
     p.set_defaults(func=cmd_flow)
 
@@ -167,6 +188,13 @@ def main() -> None:
     p.set_defaults(func=cmd_maker)
 
     args = parser.parse_args()
+    global DB_PATH, TICKS_PATH, _VENUE
+    if args.command == "crypto":
+        args.venue = "crypto"
+    _VENUE = args.venue
+    if args.venue == "crypto":
+        DB_PATH = os.path.join(_DATA_DIR, "crypto.db")
+        TICKS_PATH = os.path.join(_DATA_DIR, "crypto-ticks.db")
     args.func(args)
 
 

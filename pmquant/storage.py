@@ -58,6 +58,14 @@ class Store:
         )
         self.conn.commit()
 
+    def track_symbol(self, symbol: str) -> None:
+        """Crypto venue: one book per symbol, stored as a market row."""
+        self.conn.execute(
+            "INSERT OR IGNORE INTO markets VALUES (?,?,?,?,?,?,?,?,?,?,0)",
+            (symbol, symbol, symbol.lower(), "", "", symbol, "",
+             "base", "quote", time.time()))
+        self.conn.commit()
+
     def tracked_markets(self, unresolved_only: bool = True) -> List[sqlite3.Row]:
         q = "SELECT * FROM markets"
         if unresolved_only:

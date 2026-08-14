@@ -64,7 +64,7 @@ def _flow(tape: List[Tuple[float, float]], k: int, now: float,
     return (buy - sell) / (buy + sell)
 
 
-def run_maker(ticks_path: str, db_path: str) -> None:
+def run_maker(ticks_path: str, db_path: str, venue: str = "polymarket") -> None:
     mconn = sqlite3.connect(db_path)
     yes_tokens = {row[0] for row in mconn.execute("SELECT token_yes FROM markets")}
     mconn.close()
@@ -100,7 +100,14 @@ def run_maker(ticks_path: str, db_path: str) -> None:
             mid = (best_bid + best_ask) / 2
             spread = best_ask - best_bid
             flow = _flow(rep.trades, len(rep.trades), ts, FLOW_WINDOW)
-            if 0 < spread <= MAX_SPREAD:
+            if venue == "crypto":
+                # prices are in USD: gate spread at 5 bps, size quotes/caps in $
+                quotable = 0 < spread <= mid * 5e-4
+                q_size, inv_cap = 200.0 / mid, 1000.0 / mid
+            else:
+                quotable = 0 < spread <= MAX_SPREAD
+                q_size, inv_cap = QUOTE_SIZE, MAX_INV
+            if quotable:
                 for name, mk in makers.items():
                     want_bid, want_ask = True, True
                     if flow is not None and abs(flow) > FLOW_GATE:
@@ -110,20 +117,20 @@ def run_maker(ticks_path: str, db_path: str) -> None:
                         elif name == "chase":
                             want_bid, want_ask = against_ask, not against_ask
                     inv = mk.inv[asset]
-                    if inv >= MAX_INV:
+                    if inv >= inv_cap:
                         want_bid = False
-                    if inv <= -MAX_INV:
+                    if inv <= -inv_cap:
                         want_ask = False
                     filled = 0.0
                     if side == "SELL" and want_bid and price < best_bid:
-                        filled = min(QUOTE_SIZE, size)
+                        filled = min(q_size, size)
                         mk.inv[asset] += filled
                         mk.cash -= filled * best_bid
                         mk.cash_by[asset] -= filled * best_bid
                         mk.edge += filled * (mid - best_bid)
                         mk.fill_log.append((asset, ts, +1, filled))
                     elif side == "BUY" and want_ask and price > best_ask:
-                        filled = min(QUOTE_SIZE, size)
+                        filled = min(q_size, size)
                         mk.inv[asset] -= filled
                         mk.cash += filled * best_ask
                         mk.cash_by[asset] += filled * best_ask
@@ -141,9 +148,13 @@ def run_maker(ticks_path: str, db_path: str) -> None:
 
     print(f"== maker backtest: {n_trades:,} trade prints, {len(replays)} YES"
           f" tokens, conservative strict-through fills ==")
-    print(f"quote {QUOTE_SIZE:.0f} sh joined at best, inventory cap"
-          f" ±{MAX_INV:.0f} sh, flow gate |{FLOW_GATE}| over"
-          f" {FLOW_WINDOW:.0f}s, spread ≤ {MAX_SPREAD}")
+    if venue == "crypto":
+        print(f"quotes $200 notional joined at best, inventory cap ±$1000,"
+              f" flow gate |{FLOW_GATE}| over {FLOW_WINDOW:.0f}s, spread ≤ 5 bps")
+    else:
+        print(f"quote {QUOTE_SIZE:.0f} sh joined at best, inventory cap"
+              f" ±{MAX_INV:.0f} sh, flow gate |{FLOW_GATE}| over"
+              f" {FLOW_WINDOW:.0f}s, spread ≤ {MAX_SPREAD}")
     for name, mk in makers.items():
         marked = mk.cash
         for asset, inv in mk.inv.items():

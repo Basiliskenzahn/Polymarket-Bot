@@ -1,9 +1,21 @@
-# pmquant — Prediction Market Paper-Trading System
+# pmquant — Market Microstructure Research & Paper-Trading System
 
-A paper-trading framework for [Polymarket](https://polymarket.com) prediction
-markets: real-time order-book collection, a market scanner, and a signal
-engine with fee- and slippage-adjusted P&L simulation. Pure Python standard
-library — no dependencies.
+A paper-trading and microstructure research framework: real-time order-book
+collection, a market scanner, a signal engine with fee- and slippage-adjusted
+P&L simulation, tick-level capture, and replay-based studies (trade-flow
+predictiveness, passive market-making backtests). Pure Python standard
+library — no dependencies, including a hand-rolled RFC 6455 websocket client.
+
+Two venues share one pipeline:
+
+- **[Polymarket](https://polymarket.com)** prediction markets (original
+  target; binary contracts whose prices are probabilities). Swiss ISPs
+  DNS-block the domain under the Money Gaming Act, so collection from a
+  Swiss connection is unreliable — the dataset collected before the block
+  remains fully usable.
+- **Binance** spot crypto (`--venue crypto`): top-5 books at 1s + aggregated
+  trade prints for the highest-volume USDT pairs — ~100× Polymarket's trade
+  print rate, so studies reach statistical significance in hours, not weeks.
 
 ## Why prediction markets?
 
@@ -66,6 +78,13 @@ python3 -m pmquant.cli analyze              # does imbalance predict 1–5 min m
 python3 -m pmquant.cli ticks                # tick capture stats (rate, size, kinds)
 python3 -m pmquant.cli flow                 # replay ticks: does trade flow predict
                                             # 1-60s mid moves? (momentum/reversal)
+python3 -m pmquant.cli maker                # passive market-making backtest
+                                            # (naive / fade / chase variants)
+python3 -m pmquant.cli crypto --top 5       # collect Binance books + trades
+
+# every analysis command accepts --venue crypto to run on the Binance data:
+python3 -m pmquant.cli --venue crypto flow
+python3 -m pmquant.cli --venue crypto maker
 ```
 
 `analyze` evaluates the imbalance signal on the collected snapshot history:
