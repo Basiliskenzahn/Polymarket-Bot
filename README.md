@@ -96,6 +96,29 @@ State (order-book history, trades, account equity) persists in
 `data/pmquant.db`, so the broker resumes cash and open positions across
 sessions.
 
+## Findings so far (Aug 2026)
+
+- **Taker strategies can't clear costs.** The order-book-imbalance baseline
+  loses at exactly the rate spread/slippage predicts ($134 paid over 202
+  fills); episodes of positive P&L decomposed into resolution luck on a
+  handful of binary markets, not edge.
+- **Trade flow predicts short-horizon moves on both venues.** On Binance
+  (n > 60k trade prints), 10s taker flow correlates with the next second's
+  mid move at r ≈ 0.33, decaying within a minute. On Polymarket the same
+  measurement shows momentum at 1s then *reversal* at 15–60s — thin retail
+  markets overreact; deep professionally-made ones absorb.
+- **The signal is real but fee-gated.** Strong flow predicts ~1 bp of move;
+  retail taker fees are ~10 bps. It's a market-maker's quote-skew input, not
+  a taker strategy — the fee structure decides who can harvest it.
+- **Maker P&L is inventory-dominated at small scale.** A conservative
+  strict-through-fill backtest (naive / flow-fade / flow-chase variants)
+  shows inventory noise ≈ 20× spread income at one day of data; the chase
+  control underperforms, consistent with the reversal finding.
+
+Caveats: short samples, sports-heavy Polymarket regime, overlapping-sample
+t-stat inflation acknowledged in `tickstudy.py`. Numbers are re-verified
+against fresh data before being quoted anywhere.
+
 ## Honest limitations
 
 - Paper fills assume our order doesn't move the market (fine at small size).
