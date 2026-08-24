@@ -80,7 +80,7 @@ def cmd_flow(args: argparse.Namespace) -> None:
     if not os.path.exists(TICKS_PATH):
         print("no tick data yet — start a run first")
         return
-    run_study(TICKS_PATH, DB_PATH)
+    run_study(TICKS_PATH, DB_PATH, venue=_VENUE)
 
 
 def cmd_maker(args: argparse.Namespace) -> None:

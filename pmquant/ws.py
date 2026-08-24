@@ -23,6 +23,11 @@ from .models import Level, OrderBook
 
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
+# Force a reconnect if the socket is open but silent this long. Quiet markets
+# emit no book events, but our 10s app-level PINGs are answered with PONG
+# messages, so a healthy connection never goes 45s without traffic.
+STALE_AFTER = 45.0
+
 
 class WebSocketClient:
     def __init__(self, url: str, timeout: float = 5.0):
@@ -150,6 +155,7 @@ class MarketStream:
         self.url = url
         self._sink = on_event  # called as on_event(recv_ts, event_dict), ws thread
         self.connected = False
+        self._last_event = 0.0
         self._lock = threading.Lock()
         # token -> {"bids": {price: size}, "asks": {...}, "tick": float, "ts": float}
         self._books: Dict[str, dict] = {}
@@ -169,6 +175,16 @@ class MarketStream:
         if set(asset_ids) != set(self._assets):
             self._assets = asset_ids
             self._resubscribe.set()  # market channel needs a fresh subscribe
+
+    def data_age(self) -> float:
+        """Seconds since the last message from the socket (inf if never).
+
+        `connected` only says the last handshake succeeded; a half-dead TCP
+        connection (laptop sleep, NAT drop) keeps it True while nothing
+        arrives. Freshness is the honest health signal.
+        """
+        last = self._last_event
+        return time.time() - last if last else float("inf")
 
     def book(self, token_id: str, max_age: float = 90.0) -> Optional[OrderBook]:
         """Current book sampled now, or None if we have no fresh state."""
@@ -199,6 +215,7 @@ class MarketStream:
                 backoff = 1.0
                 self._resubscribe.clear()
                 last_ping = time.time()
+                self._last_event = time.time()
                 while not self._stop.is_set() and not self._resubscribe.is_set():
                     if time.time() - last_ping > 10:
                         ws.send_text("PING")  # app-level keepalive
@@ -206,9 +223,12 @@ class MarketStream:
                     try:
                         msg = ws.recv_message()
                     except socket.timeout:
+                        if self.data_age() > STALE_AFTER:
+                            break  # open but silent socket: force reconnect
                         continue
                     if msg is None:
                         break
+                    self._last_event = time.time()
                     self._handle(msg)
             except Exception:
                 pass

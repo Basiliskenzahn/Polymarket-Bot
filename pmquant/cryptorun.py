@@ -40,7 +40,13 @@ def run_crypto(store: Store, ticks_path: str, top: int = 5,
             if book.mid is not None:
                 mids.append(f"{sym} {book.mid:,.2f}")
         store.commit()
-        state = "live" if stream.connected else "reconnecting"
+        age = stream.data_age()
+        if not stream.connected:
+            state = "reconnecting"
+        elif age > 10:
+            state = f"stale {age:.0f}s"
+        else:
+            state = "live"
         print(f"{time.strftime('%H:%M:%S')} ws {state} | ticks {ticks.total:,}"
               f" | {' | '.join(mids[:4])}", flush=True)
         time.sleep(max(0.0, interval - (time.time() - tick_start)))

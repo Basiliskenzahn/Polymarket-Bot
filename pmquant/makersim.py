@@ -50,20 +50,6 @@ class _MakerState:
         # (asset, ts, +1 buy / -1 sell, shares)
 
 
-def _flow(tape: List[Tuple[float, float]], k: int, now: float,
-          window: float) -> Optional[float]:
-    """Signed flow ratio over trades strictly before index k."""
-    buy = sell = 0.0
-    j = k - 1
-    while j >= 0 and tape[j][0] > now - window:
-        s = tape[j][1]
-        buy, sell = buy + max(s, 0.0), sell + max(-s, 0.0)
-        j -= 1
-    if buy + sell == 0:
-        return None
-    return (buy - sell) / (buy + sell)
-
-
 def run_maker(ticks_path: str, db_path: str, venue: str = "polymarket") -> None:
     mconn = sqlite3.connect(db_path)
     yes_tokens = {row[0] for row in mconn.execute("SELECT token_yes FROM markets")}
@@ -99,7 +85,7 @@ def run_maker(ticks_path: str, db_path: str, venue: str = "polymarket") -> None:
             best_bid, best_ask = max(rep.bids), min(rep.asks)
             mid = (best_bid + best_ask) / 2
             spread = best_ask - best_bid
-            flow = _flow(rep.trades, len(rep.trades), ts, FLOW_WINDOW)
+            flow = rep.flow(len(rep.trades), ts, FLOW_WINDOW)
             if venue == "crypto":
                 # prices are in USD: gate spread at 5 bps, size quotes/caps in $
                 quotable = 0 < spread <= mid * 5e-4
@@ -139,7 +125,7 @@ def run_maker(ticks_path: str, db_path: str, venue: str = "polymarket") -> None:
                     if filled:
                         mk.fills += 1
                         mk.shares += filled
-        rep.trades.append((ts, size if side == "BUY" else -size))
+        rep.add_trade(ts, size if side == "BUY" else -size)
     tconn.close()
 
     def capture_alive(t: float) -> bool:

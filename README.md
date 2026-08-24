@@ -96,28 +96,40 @@ State (order-book history, trades, account equity) persists in
 `data/pmquant.db`, so the broker resumes cash and open positions across
 sessions.
 
-## Findings so far (Aug 2026)
+## Findings so far (updated 24 Aug 2026)
+
+Based on 12 days of Binance ticks (7.1M trade prints, 9 pairs) and 8 days of
+Polymarket ticks (32k prints, 171 tokens).
 
 - **Taker strategies can't clear costs.** The order-book-imbalance baseline
-  loses at exactly the rate spread/slippage predicts ($134 paid over 202
-  fills); episodes of positive P&L decomposed into resolution luck on a
+  loses at exactly the rate spread/slippage predicts (paper P&L −$637 over
+  753 fills); episodes of positive P&L decomposed into resolution luck on a
   handful of binary markets, not edge.
-- **Trade flow predicts short-horizon moves on both venues.** On Binance
-  (n > 60k trade prints), 10s taker flow correlates with the next second's
-  mid move at r ≈ 0.33, decaying within a minute. On Polymarket the same
-  measurement shows momentum at 1s then *reversal* at 15–60s — thin retail
-  markets overreact; deep professionally-made ones absorb.
-- **The signal is real but fee-gated.** Strong flow predicts ~1 bp of move;
+- **Trade flow predicts short-horizon moves, and the effect is momentum
+  that decays — not momentum-then-reversal.** On Binance, 10s taker flow
+  correlates with the next-second return at r = +0.15 (65% directional hit
+  rate), fading monotonically to r = +0.06 at 60s, with the same shape on
+  every pair. Part of the 1s number is the print's own mechanical price
+  impact (books are 1s snapshots). On Polymarket the same measurement is
+  weakly positive at every horizon (r ≈ +0.03–0.04, hit 54–57%).
+- **A one-day finding did not replicate.** The first Polymarket sample
+  (one day, sports-heavy) showed a significant *reversal* at 15–60s
+  (t ≈ −3 to −5). With 8× the data it is gone. Kept here deliberately: it's
+  what small-sample "significance" looks like from the inside.
+- **The signal is fee-gated.** Strong flow predicts a few bps of move;
   retail taker fees are ~10 bps. It's a market-maker's quote-skew input, not
   a taker strategy — the fee structure decides who can harvest it.
-- **Maker P&L is inventory-dominated at small scale.** A conservative
-  strict-through-fill backtest (naive / flow-fade / flow-chase variants)
-  shows inventory noise ≈ 20× spread income at one day of data; the chase
-  control underperforms, consistent with the reversal finding.
+- **Passive quoting loses to adverse selection (negative result).** The
+  strict-through-fill maker backtest on Binance earns +$1.6k of spread at
+  fill and gives back −$22.7k of post-fill drift over 1.4M fills. Fade and
+  chase variants are indistinguishable — there is no reversal to fade. The
+  sim is also structurally unfair to the maker: "through" fills against a
+  1s-stale snapshot are adverse by construction; a credible version needs
+  the `depth@100ms` diff stream.
 
-Caveats: short samples, sports-heavy Polymarket regime, overlapping-sample
-t-stat inflation acknowledged in `tickstudy.py`. Numbers are re-verified
-against fresh data before being quoted anywhere.
+Caveats: t-stats in `tickstudy.py` assume independent samples and are
+inflated by overlapping windows — read r and hit rate, not t. Numbers are
+re-verified against fresh data before being quoted anywhere.
 
 ## Honest limitations
 

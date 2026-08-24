@@ -27,6 +27,11 @@ WS_BASE = "wss://stream.binance.com:443/stream?streams="
 
 _EXCLUDE_BASES = ("USDC", "FDUSD", "TUSD", "DAI", "EUR", "BUSD", "USDP", "EURI")
 
+# Force a reconnect if the socket is open but silent this long. depth5@1000ms
+# guarantees at least one event per symbol per second, so 15s of silence means
+# the connection is dead (laptop sleep, NAT drop) even if TCP hasn't noticed.
+STALE_AFTER = 15.0
+
 
 def top_symbols(n: int = 5) -> List[str]:
     """Top USDT pairs by 24h quote volume, excluding stablecoin pairs."""
@@ -53,6 +58,7 @@ class BinanceStream:
         self.symbols = [s.upper() for s in symbols]
         self._sink = on_event
         self.connected = False
+        self._last_event = 0.0
         self._lock = threading.Lock()
         self._books: Dict[str, dict] = {}   # sym -> {"bids": [...], "asks": [...], "ts": float}
         self._stop = threading.Event()
@@ -71,6 +77,16 @@ class BinanceStream:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def data_age(self) -> float:
+        """Seconds since the last message from the socket (inf if never).
+
+        `connected` only says the last handshake succeeded; a half-dead TCP
+        connection (laptop sleep, NAT drop) keeps it True while nothing
+        arrives. Freshness is the honest health signal.
+        """
+        last = self._last_event
+        return time.time() - last if last else float("inf")
 
     def book(self, symbol: str, max_age: float = 30.0) -> Optional[OrderBook]:
         with self._lock:
@@ -95,6 +111,7 @@ class BinanceStream:
                 self.connected = True
                 backoff = 1.0
                 last_pong = time.time()
+                self._last_event = time.time()
                 while not self._stop.is_set():
                     if time.time() - last_pong > 60:
                         ws.send_pong()  # unsolicited pong keepalive per docs
@@ -102,9 +119,12 @@ class BinanceStream:
                     try:
                         msg = ws.recv_message()
                     except socket.timeout:
+                        if self.data_age() > STALE_AFTER:
+                            break  # open but silent socket: force reconnect
                         continue
                     if msg is None:
                         break
+                    self._last_event = time.time()
                     self._handle(msg)
             except Exception:
                 pass

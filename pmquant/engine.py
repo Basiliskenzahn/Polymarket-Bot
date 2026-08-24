@@ -262,7 +262,13 @@ class Engine:
             elapsed = time.time() - tick_start
             ws_state = ""
             if self.stream is not None:
-                live = "live" if self.stream.connected else "reconnecting"
+                age = self.stream.data_age()
+                if not self.stream.connected:
+                    live = "reconnecting"
+                elif age > 30:
+                    live = f"stale {age:.0f}s"
+                else:
+                    live = "live"
                 ws_state = f" | ws {live} ({self._ws_books}ws/{self._rest_books}rest)"
                 if self.ticks is not None:
                     ws_state += f" | ticks {self.ticks.total:,}"
