@@ -1,4 +1,4 @@
-# pmquant: Market Microstructure Research & Paper-Trading System
+Polymarket and Binance Bot
 
 A paper-trading and microstructure research framework: real-time order-book
 collection, a market scanner, a signal engine with fee- and slippage-adjusted
